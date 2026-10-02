@@ -10,6 +10,7 @@ type Me = {
   user: string;
   linked: boolean;
   mock: boolean;
+  bot: string | null;
   memories: { facts: number; style: number; personas: number };
 };
 type Persona = { slug: string; name: string; memories: number };
@@ -55,6 +56,7 @@ export default function Chat() {
   const [showImport, setShowImport] = useState(false);
   const [showLink, setShowLink] = useState(false);
   const [showDebug, setShowDebug] = useState(true);
+  const [mobilePanel, setMobilePanel] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -157,6 +159,16 @@ export default function Chat() {
               {me.memories.facts} facts · {me.memories.style} style · {me.memories.personas} persona
             </span>
           )}
+          {me?.bot && (
+            <a
+              href={`https://t.me/${me.bot}`}
+              target="_blank"
+              rel="noreferrer"
+              className="hidden rounded-lg border border-border px-3 py-1.5 hover:bg-surface-2 md:inline"
+            >
+              Chat on Telegram ↗
+            </a>
+          )}
           <button
             onClick={() => setShowLink(true)}
             className="rounded-lg border border-border px-3 py-1.5 hover:bg-surface-2"
@@ -224,7 +236,10 @@ export default function Chat() {
           <input type="checkbox" checked={autoSpeak} onChange={(e) => setAutoSpeak(e.target.checked)} />
           speak replies
         </label>
-        <button onClick={() => setShowDebug((v) => !v)} className="text-muted hover:text-foreground">
+        <button onClick={() => setMobilePanel(true)} className="text-muted hover:text-foreground lg:hidden">
+          memory
+        </button>
+        <button onClick={() => setShowDebug((v) => !v)} className="hidden text-muted hover:text-foreground lg:inline">
           {showDebug ? "hide" : "show"} memory panel
         </button>
       </div>
@@ -247,7 +262,7 @@ export default function Chat() {
                 >
                   {m.content || <span className="animate-pulse text-muted">thinking…</span>}
                   {m.role === "assistant" && m.content && !m.error && (
-                    <div className="mt-1 flex gap-3 text-xs text-muted opacity-0 transition group-hover:opacity-100">
+                    <div className="mt-1 flex gap-3 text-xs text-muted transition sm:opacity-0 sm:group-hover:opacity-100">
                       <button onClick={() => speak(m.content)}>🔊 speak</button>
                       {m.debug && (
                         <span>
@@ -318,9 +333,25 @@ export default function Chat() {
           </div>
         </main>
 
-        {showDebug && <MemoryPanel debug={lastDebug} me={me} />}
+        {showDebug && (
+          <MemoryPanel debug={lastDebug} me={me} className="hidden w-80 shrink-0 border-l border-border lg:block" />
+        )}
       </div>
 
+      {mobilePanel && (
+        <div className="fixed inset-0 z-10 flex justify-end bg-black/60 lg:hidden" onClick={() => setMobilePanel(false)}>
+          <div className="relative h-full w-[85%] max-w-sm bg-background" onClick={(e) => e.stopPropagation()}>
+            <button
+              onClick={() => setMobilePanel(false)}
+              className="absolute top-3 right-3 text-muted hover:text-foreground"
+              aria-label="Close memory panel"
+            >
+              ✕
+            </button>
+            <MemoryPanel debug={lastDebug} me={me} className="h-full" />
+          </div>
+        </div>
+      )}
       {showImport && (
         <ImportDialog
           onClose={() => setShowImport(false)}
@@ -384,9 +415,9 @@ function Empty({ mode, personaName, onPick }: { mode: Mode; personaName?: string
   );
 }
 
-function MemoryPanel({ debug, me }: { debug: Debug | null; me: Me | null }) {
+function MemoryPanel({ debug, me, className }: { debug: Debug | null; me: Me | null; className: string }) {
   return (
-    <aside className="hidden w-80 shrink-0 overflow-y-auto border-l border-border p-4 text-sm lg:block">
+    <aside className={`overflow-y-auto p-4 text-sm ${className}`}>
       <h2 className="font-semibold">Memory panel</h2>
       <p className="mt-1 text-xs text-muted">Only your own memories are shown here.</p>
 
@@ -564,7 +595,7 @@ function LinkDialog({ me, onClose, onDone }: { me: Me | null; onClose: () => voi
       <p className="text-sm text-muted">
         {me?.linked
           ? "This browser already uses your Telegram memory. Paste a new code to switch accounts."
-          : "Send /link to the EchoBot bot on Telegram and paste the code here. Web, Telegram and CLI will then share one memory."}
+          : `Send /link to ${me?.bot ? `@${me.bot}` : "the EchoBot bot"} on Telegram and paste the code here. Web, Telegram and CLI will then share one memory.`}
       </p>
       <input
         value={code}

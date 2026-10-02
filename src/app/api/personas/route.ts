@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { personaName } from "@/lib/brain";
 import { importPersona, listPersonas, parseChat, senders } from "@/lib/persona";
+import { rateLimit } from "@/lib/rate-limit";
 import { getWebUser } from "@/lib/web-user";
 
 export const maxDuration = 60;
@@ -12,11 +13,11 @@ export async function GET() {
 }
 
 const Body = z.object({
-  raw: z.string().min(20).max(5_000_000),
+  raw: z.string().min(20).max(4_000_000),
   // Omit to just get the list of senders found in the export.
   target: z.string().max(80).optional(),
   consent: z.boolean().optional(),
-  maxExamples: z.number().int().min(5).max(200).optional(),
+  maxExamples: z.number().int().min(5).max(60).optional(),
 });
 
 export async function POST(req: Request) {
@@ -32,8 +33,10 @@ export async function POST(req: Request) {
   if (!consent) {
     return Response.json({ error: "Confirm that this person agreed to be turned into a persona." }, { status: 400 });
   }
+  const user = await getWebUser();
+  const wait = rateLimit(user, "import");
+  if (wait) return Response.json({ error: `Too many imports. Try again in ${Math.ceil(wait / 60)} min.` }, { status: 429 });
   try {
-    const user = await getWebUser();
     const res = await importPersona({ user, raw, target, maxExamples });
     return Response.json({ ...res, name: personaName(res.slug) });
   } catch (err) {

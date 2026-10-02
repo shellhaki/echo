@@ -2,12 +2,9 @@
 // Works with any OpenAI-compatible /audio/transcriptions endpoint
 // (Groq, OpenAI, Meta, local whisper servers...).
 
-import { Agent, FormData, fetch } from "undici";
+import { FormData } from "undici";
 import { env } from "../env";
-
-// Plain HTTP/1.1 connection pool. Under Next.js on Node 26 the default fetch
-// reuses a dead HTTP/2 session to the STT host (ERR_HTTP2_INVALID_SESSION).
-const dispatcher = new Agent({ allowH2: false });
+import { httpFetch } from "../http";
 
 export async function transcribe(audio: Blob, filename = "audio.webm"): Promise<string> {
   if (!env.stt.apiKey) throw new Error("STT_API_KEY is not set.");
@@ -18,13 +15,12 @@ export async function transcribe(audio: Blob, filename = "audio.webm"): Promise<
   form.append("model", env.stt.model);
   form.append("response_format", "json");
 
-  let res: Awaited<ReturnType<typeof fetch>>;
+  let res: Awaited<ReturnType<typeof httpFetch>>;
   try {
-    res = await fetch(`${env.stt.baseURL.replace(/\/$/, "")}/audio/transcriptions`, {
+    res = await httpFetch(`${env.stt.baseURL.replace(/\/$/, "")}/audio/transcriptions`, {
       method: "POST",
       headers: { Authorization: `Bearer ${env.stt.apiKey}` },
       body: form,
-      dispatcher,
     });
   } catch (err) {
     console.error("[stt] request failed:", err, (err as { cause?: unknown }).cause);

@@ -7,7 +7,7 @@
 //   [card]    a persona summary written at import time
 
 import { generateJson } from "./llm";
-import { recall, remember } from "./memory";
+import { recall, rememberMany } from "./memory";
 
 export const TAG = { trait: "[trait] ", example: "[example] ", card: "[card] " } as const;
 
@@ -16,14 +16,25 @@ export type StyleContext = { traits: string[]; examples: string[]; card?: string
 const STYLE_QUERY =
   "how they talk: greetings, slang, catchphrases, tone, emoji, capitalisation, punctuation, message length";
 
-export async function loadStyle(namespace: string, message: string): Promise<StyleContext> {
-  const [byTopic, byStyle] = await Promise.all([
-    recall(namespace, message, 10),
-    recall(namespace, STYLE_QUERY, 12),
-  ]);
+// The relayer allows ~60 requests/min per key for the whole app, so a style
+// profile is fetched once and reused for a minute (and dropped on new writes).
+const STYLE_TTL_MS = 60_000;
+const gs = globalThis as unknown as { __ebStyle?: Map<string, { ctx: StyleContext; at: number }> };
+const styleCache: Map<string, { ctx: StyleContext; at: number }> = (gs.__ebStyle ??= new Map());
+
+export async function loadStyle(namespace: string): Promise<StyleContext> {
+  const hit = styleCache.get(namespace);
+  if (hit && Date.now() - hit.at < STYLE_TTL_MS) return hit.ctx;
+  const ctx = parseStyle(await recall(namespace, STYLE_QUERY, 20));
+  styleCache.set(namespace, { ctx, at: Date.now() });
+  if (styleCache.size > 5_000) styleCache.clear();
+  return ctx;
+}
+
+function parseStyle(memories: { text: string }[]): StyleContext {
   const seen = new Set<string>();
   const ctx: StyleContext = { traits: [], examples: [] };
-  for (const m of [...byTopic, ...byStyle]) {
+  for (const m of memories) {
     if (seen.has(m.text)) continue;
     seen.add(m.text);
     if (m.text.startsWith(TAG.trait)) ctx.traits.push(m.text.slice(TAG.trait.length));
@@ -33,6 +44,10 @@ export async function loadStyle(namespace: string, message: string): Promise<Sty
   ctx.traits = ctx.traits.slice(0, 10);
   ctx.examples = ctx.examples.slice(0, 8);
   return ctx;
+}
+
+export function forgetStyleCache(namespace: string) {
+  styleCache.delete(namespace);
 }
 
 type StyleScan = { traits?: string[]; keep_as_example?: boolean };
@@ -45,7 +60,7 @@ export async function learnStyle(namespace: string, message: string): Promise<st
   const text = message.trim();
   if (text.length < 2 || text.length > 600) return [];
 
-  const known = await loadStyle(namespace, text);
+  const known = await loadStyle(namespace);
   const scan = await generateJson<StyleScan>(
     `You study HOW a person writes so an assistant can imitate them. Ignore WHAT they say.
 Given one message and the traits already known, return:
@@ -63,12 +78,13 @@ Return {"traits": [], "keep_as_example": false} when nothing stands out.`,
   for (const trait of (scan.traits ?? []).slice(0, 2)) {
     const t = String(trait).trim();
     if (!t || known.traits.some((k) => k.toLowerCase() === t.toLowerCase())) continue;
-    await remember(namespace, TAG.trait + t);
     stored.push(TAG.trait + t);
   }
-  if (scan.keep_as_example && !known.examples.includes(text)) {
-    await remember(namespace, TAG.example + text);
-    stored.push(TAG.example + text);
+  if (scan.keep_as_example && !known.examples.includes(text)) stored.push(TAG.example + text);
+  if (stored.length) {
+    // One bulk request instead of one per memory.
+    await rememberMany(namespace, stored);
+    forgetStyleCache(namespace);
   }
   return stored;
 }

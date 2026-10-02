@@ -61,6 +61,30 @@ npm run telegram                                    # local, long polling
 npm run telegram:webhook -- https://<your-app>.vercel.app   # production webhook
 ```
 
+Bot commands: `/help`, `/mirror`, `/assistant`, `/new`, `/memories`, `/personas`, `/talkto <name>`, `/link`.
+To build a persona on Telegram, send the bot a WhatsApp export (`.txt`) or a Telegram export (`result.json`), pick the person, and confirm they consented.
+The bot only answers in private chats.
+
+## Deploy (Vercel)
+
+1. Push to GitHub and import the repo in Vercel (framework: Next.js, Node 22.19 or later).
+2. Add every variable from `.env.example` in Vercel → Settings → Environment Variables. Set `MEMWAL_ENV=prod` and a long random `USER_ID_SALT`. Never change the salt afterwards: changing it disconnects existing users from their memories.
+3. Deploy, then point Telegram at the deployment:
+   ```bash
+   npm run telegram:webhook -- https://<your-app>.vercel.app
+   ```
+4. Check `/api/me` in the browser. It should report `"mock": false`.
+
+## Limits and safeguards
+- The Walrus Memory relayer allows about 60 requests per minute per delegate key. EchoBot keeps each chat turn to 1–3 relayer calls:
+  - it caches style profiles for 60 s;
+  - it skips fact extraction for messages that can't contain facts ("lol", "ok");
+  - it batches writes;
+  - it retries background writes when rate-limited.
+- New memories take a few seconds (single facts) up to a couple of minutes (persona imports) to be indexed. Recent writes are served from a short-lived cache so they're usable immediately.
+- Per-user rate limits: 20 messages/min, 10 voice notes/min, 3 persona imports/hour.
+- Persona imports require an explicit consent confirmation, and personas always identify as AI when asked.
+
 ### CLI
 ```bash
 npm run cli

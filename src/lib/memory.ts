@@ -46,6 +46,8 @@ export const ns = {
   facts: (user: string) => `${prefix()}-u-${hash(user)}-facts`,
   /** How the user talks: style traits + example messages. */
   style: (user: string) => `${prefix()}-u-${hash(user)}-style`,
+  /** Small per-user settings (e.g. Telegram mode) so they survive restarts. */
+  settings: (user: string) => `${prefix()}-u-${hash(user)}-settings`,
   /** Imported persona, owned by one user. */
   persona: (user: string, slug: string) => `${prefix()}-u-${hash(user)}-p-${slug}`,
   /** Prefix shared by every persona namespace of a user. */
@@ -54,27 +56,83 @@ export const ns = {
   userPrefix: (user: string) => `${prefix()}-u-${hash(user)}-`,
 };
 
+// Write-through cache. The relayer needs from a few seconds (single writes) to
+// a couple of minutes (bulk imports) before a new memory shows up in recall.
+// Until then, recall also returns what this server instance wrote recently,
+// so a fact told a moment ago or a freshly imported persona works immediately.
+const RECENT_TTL_MS = 10 * 60 * 1000;
+const RECENT_MAX = 40;
+const gr = globalThis as unknown as { __ebRecent?: Map<string, { text: string; at: number }[]> };
+const recentWrites: Map<string, { text: string; at: number }[]> = (gr.__ebRecent ??= new Map());
+
+function addRecent(namespace: string, texts: string[]) {
+  const now = Date.now();
+  const list = (recentWrites.get(namespace) ?? []).filter((r) => now - r.at < RECENT_TTL_MS);
+  for (const text of texts) list.push({ text, at: now });
+  recentWrites.set(namespace, list.slice(-RECENT_MAX));
+}
+
+function getRecent(namespace: string): string[] {
+  const now = Date.now();
+  return (recentWrites.get(namespace) ?? [])
+    .filter((r) => now - r.at < RECENT_TTL_MS)
+    .map((r) => r.text)
+    .reverse(); // newest first
+}
+
+type RelayerError = { status?: number; retryAfterSeconds?: number; message?: string };
+
+function describe(err: unknown): string {
+  const e = err as RelayerError;
+  return e?.status ? `${e.status} ${e.message?.slice(0, 160)}` : String(err);
+}
+
+/**
+ * Writes run in the background, so they can afford to wait out the relayer's
+ * per-key rate limit (HTTP 429) instead of silently dropping a memory.
+ */
+async function withRetry<T>(what: string, fn: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      const e = err as RelayerError;
+      if (e?.status !== 429 || attempt >= 2) throw err;
+      const waitS = Math.min(e.retryAfterSeconds ?? 5, 15);
+      console.warn(`[memory] ${what} rate-limited, retrying in ${waitS}s`);
+      await new Promise((r) => setTimeout(r, waitS * 1000));
+    }
+  }
+}
+
 export async function recall(
   namespace: string,
   query: string,
   topK = 6,
-  maxDistance?: number,
+  opts: { maxDistance?: number; sort?: "relevance" | "recent" } = {},
 ): Promise<RecallMemory[]> {
+  let results: RecallMemory[] = [];
   try {
-    const res = await memwal().recall({ query, namespace, topK, maxDistance });
-    return res.results;
+    results = (await memwal().recall({ query, namespace, topK, ...opts })).results;
   } catch (err) {
-    console.error(`[memory] recall failed in ${namespace}:`, err);
-    return [];
+    console.error(`[memory] recall failed in ${namespace}: ${describe(err)}`);
   }
+  const seen = new Set(results.map((r) => r.text));
+  const pending = getRecent(namespace)
+    .filter((text) => !seen.has(text))
+    .map((text) => ({ blob_id: "", text, distance: 0 }));
+  if (!pending.length) return results;
+  // For "recent" the just-written entries are by definition the newest.
+  return opts.sort === "recent" ? [...pending, ...results].slice(0, topK) : [...results, ...pending];
 }
 
 /** Fire-and-forget write. The relayer embeds, encrypts and uploads in the background. */
 export async function remember(namespace: string, text: string): Promise<void> {
   try {
-    await memwal().remember(text, namespace);
+    await withRetry("remember", () => memwal().remember(text, namespace));
+    addRecent(namespace, [text]);
   } catch (err) {
-    console.error(`[memory] remember failed in ${namespace}:`, err);
+    console.error(`[memory] remember failed in ${namespace}: ${describe(err)}`);
   }
 }
 
@@ -83,10 +141,11 @@ export async function rememberMany(namespace: string, texts: string[]): Promise<
   for (let i = 0; i < texts.length; i += 20) {
     const chunk = texts.slice(i, i + 20).map((text) => ({ text, namespace }));
     try {
-      const res = await memwal().rememberBulk(chunk);
+      const res = await withRetry("rememberBulk", () => memwal().rememberBulk(chunk));
       accepted += res.job_ids.length;
+      addRecent(namespace, chunk.map((c) => c.text));
     } catch (err) {
-      console.error(`[memory] bulk remember failed in ${namespace}:`, err);
+      console.error(`[memory] bulk remember failed in ${namespace}: ${describe(err)}`);
     }
   }
   return accepted;
@@ -98,10 +157,12 @@ export async function rememberMany(namespace: string, texts: string[]): Promise<
  */
 export async function analyzeFacts(namespace: string, text: string): Promise<string[]> {
   try {
-    const res = await memwal().analyze(text, { namespace });
-    return res.facts.map((f) => f.text);
+    const res = await withRetry("analyze", () => memwal().analyze(text, { namespace }));
+    const facts = res.facts.map((f) => f.text);
+    addRecent(namespace, facts);
+    return facts;
   } catch (err) {
-    console.error(`[memory] analyze failed in ${namespace}:`, err);
+    console.error(`[memory] analyze failed in ${namespace}: ${describe(err)}`);
     return [];
   }
 }
@@ -112,9 +173,22 @@ export async function userNamespaces(user: string) {
   return (await allNamespaces()).filter((n) => n.name.startsWith(mine));
 }
 
-/** Every namespace on the account. Server-side only: used for blob counting. */
-export async function allNamespaces() {
-  const out: { name: string; memory_count: number; storage_used: number }[] = [];
+let nsCache: { at: number; data: Promise<NamespaceRow[]> } | undefined;
+
+/** Every namespace on the account (cached 20s to spare the relayer's rate limit). */
+export function allNamespaces(): Promise<NamespaceRow[]> {
+  if (!nsCache || Date.now() - nsCache.at > 20_000) {
+    const data = fetchAllNamespaces();
+    nsCache = { at: Date.now(), data };
+    data.catch(() => (nsCache = undefined));
+  }
+  return nsCache.data;
+}
+
+type NamespaceRow = { name: string; memory_count: number; storage_used: number };
+
+async function fetchAllNamespaces() {
+  const out: NamespaceRow[] = [];
   let cursor: string | undefined;
   for (let page = 0; page < 50; page++) {
     const res = await memwal().listNamespaces({ cursor, limit: 500 });

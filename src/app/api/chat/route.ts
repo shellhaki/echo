@@ -1,6 +1,7 @@
 import { after } from "next/server";
 import { z } from "zod";
 import { respond } from "@/lib/brain";
+import { rateLimit } from "@/lib/rate-limit";
 import { getWebUser } from "@/lib/web-user";
 
 export const maxDuration = 60;
@@ -21,6 +22,8 @@ export async function POST(req: Request) {
   if (!parsed.success) return Response.json({ error: "Invalid request" }, { status: 400 });
 
   const user = await getWebUser();
+  const wait = rateLimit(user, "chat");
+  if (wait) return Response.json({ error: `You're sending messages fast. Try again in ${wait}s.` }, { status: 429 });
   try {
     const { result, debug, afterTurn } = await respond({ ...parsed.data, user, channel: "web" });
     // Extract facts + learn style once the response has finished streaming.

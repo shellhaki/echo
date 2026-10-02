@@ -42,5 +42,8 @@
     "tsx": "^4.23.15",
     "typescript": "^5"
   },
-  "type": "module"
+  "type": "module",
+  "engines": {
+    "node": ">=22.19.0"
+  }
 }
