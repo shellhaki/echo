@@ -1,0 +1,10 @@
+version = 1
+
+[project]
+id = 'f767810c-3bd8-477e-a550-3633c5824374'
+name = 'walbuddy'
+
+[environment]
+id = 'e7071a4b-d7dd-4bfa-a527-a9bb0ca36aa1'
+name = 'dev'
+revision = 4

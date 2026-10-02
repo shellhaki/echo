@@ -1,26 +1,46 @@
 {
-  "name": "walbuddy",
+  "name": "echobot",
   "version": "0.1.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "cli": "tsx scripts/cli.ts",
+    "telegram": "tsx scripts/telegram-dev.ts",
+    "telegram:webhook": "tsx scripts/set-webhook.ts",
+    "smoke": "tsx scripts/smoke.ts",
+    "blobs": "tsx scripts/blobs.ts",
+    "typecheck": "tsc --noEmit",
+    "llm:check": "tsx scripts/llm-check.ts"
   },
   "dependencies": {
+    "@ai-sdk/openai-compatible": "^3.0.60",
+    "@ai-sdk/react": "^4.0.126",
+    "@mysten-incubation/memwal": "^0.1.8",
+    "@mysten/seal": "^1.4.17",
+    "@mysten/sui": "^2.33.2",
+    "@mysten/walrus": "^1.2.32",
+    "ai": "^7.0.123",
+    "grammy": "^1.46.0",
     "next": "16.3.8",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "undici": "^8.11.2",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "dotenv": "^18.0.5",
     "eslint": "^9",
     "eslint-config-next": "16.3.8",
     "tailwindcss": "^4",
+    "tsx": "^4.23.15",
     "typescript": "^5"
-  }
+  },
+  "type": "module"
 }

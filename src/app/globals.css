@@ -1,26 +1,39 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #0b0d10;
+  --surface: #13171c;
+  --surface-2: #1a2027;
+  --border: #252c35;
+  --foreground: #e8edf2;
+  --muted: #8b96a3;
+  --accent: #4fd1c5;
+  --accent-ink: #062622;
+  --danger: #f87171;
 }
 
 @theme inline {
   --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-border: var(--border);
   --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-danger: var(--danger);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
 }
+
+@keyframes pulse-ring {
+  0% { box-shadow: 0 0 0 0 rgb(248 113 113 / 0.5); }
+  100% { box-shadow: 0 0 0 12px rgb(248 113 113 / 0); }
+}
+.recording { animation: pulse-ring 1.2s ease-out infinite; }
